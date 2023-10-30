@@ -219,7 +219,7 @@ Similar to [additional_users_dn](#additional_users_dn) but it applies to group s
 default negating this requirement. Refer to the [filter defaults](../../reference/guides/ldap.md#filter-defaults) for
 more information.*
 
-Similar to [users_filter](#usersfilter) but it applies to group searches. In order to include groups the member is not
+Similar to [users_filter](#users_filter) but it applies to group searches. In order to include groups the member is not
 a direct member of, but is a member of another group that is a member of those (i.e. recursive groups), you may try
 using the following filter which is currently only tested against Microsoft Active Directory:
 
