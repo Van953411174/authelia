@@ -66,6 +66,7 @@ const (
 type Authn struct {
 	Username string
 	Method   string
+	ClientID string
 
 	Details authentication.UserDetails
 	Level   authentication.Level

@@ -127,7 +127,7 @@ identity_providers:
       - id: 'example-one'
         public: true
         redirect_uris:
-          - 'http://localhost:2121'
+          - 'http://localhost/callback'
         scopes:
           - 'offline_access'
           - 'authelia.bearer.authz'
@@ -150,6 +150,8 @@ identity_providers:
 
 ##### Confidential Client Example: Authorization Code Flow
 
+This is likely the most common configuration for most users.
+
 ```yaml
 identity_providers:
   oidc:
@@ -158,7 +160,7 @@ identity_providers:
         secret: '$pbkdf2-sha512$310000$c8p78n7pUMln0jzvd4aK4Q$JNRBzwAo0ek5qKn50cFzzvE9RXV88h1wJn5KGiHrD0YKtZaR/nCb2CJPOsKaPK0hjf.9yHxzQGZziziccp6Yng'  # The digest of 'insecure_secret'.
         public: false
         redirect_uris:
-          - 'https://id.example.com'
+          - 'http://localhost/callback'
         scopes:
           - 'offline_access'
           - 'authelia.bearer.authz'
@@ -181,6 +183,10 @@ identity_providers:
 
 ##### Confidential Client Example: Client Credentials Flow
 
+This example illustrates a method to configure a Client Credential flow for this purpose. This flow is useful for
+automations. It's important to note that for access control evaluation purposes this token will match a subject of
+`oauth2:client:example-two` i.e. the `oauth2:client:` prefix followed by the client id.
+
 ```yaml
 identity_providers:
   oidc:
@@ -188,8 +194,6 @@ identity_providers:
       - id: 'example-two'
         secret: '$pbkdf2-sha512$310000$c8p78n7pUMln0jzvd4aK4Q$JNRBzwAo0ek5qKn50cFzzvE9RXV88h1wJn5KGiHrD0YKtZaR/nCb2CJPOsKaPK0hjf.9yHxzQGZziziccp6Yng'  # The digest of 'insecure_secret'.
         public: false
-        redirect_uris:
-          - 'https://id.example.com'
         scopes:
           - 'authelia.bearer.authz'
         audience:
@@ -197,8 +201,5 @@ identity_providers:
           - 'https://app2.example.com'
         grant_types:
           - 'client_credentials'
-        enforce_par: true
-        enforce_pkce: true
-        pkce_challenge_method: 'S256'
         token_endpoint_auth_method: 'client_secret_post'
 ```

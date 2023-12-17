@@ -180,8 +180,10 @@ func (s *HeaderAuthnStrategy) Get(ctx *middlewares.AutheliaCtx, _ *session.Sessi
 	}
 
 	var (
-		username string
-		level    authentication.Level
+		username, clientID string
+
+		ccs   bool
+		level authentication.Level
 	)
 
 	scheme := authz.Scheme()
@@ -194,7 +196,7 @@ func (s *HeaderAuthnStrategy) Get(ctx *middlewares.AutheliaCtx, _ *session.Sessi
 	case model.AuthorizationSchemeBasic:
 		username, level, err = s.handleGetBasic(ctx, authz, object)
 	case model.AuthorizationSchemeBearer:
-		username, level, err = s.handleGetBearer(ctx, authz, object)
+		username, clientID, ccs, level, err = s.handleGetBearer(ctx, authz, object)
 	default:
 		err = fmt.Errorf("failed to parse content of %s header: the scheme '%s' is not known", s.headerAuthorize, authz.SchemeRaw())
 	}
@@ -203,24 +205,32 @@ func (s *HeaderAuthnStrategy) Get(ctx *middlewares.AutheliaCtx, _ *session.Sessi
 		return authn, err
 	}
 
-	if len(username) == 0 {
-		return authn, fmt.Errorf("failed to determine username from the %s header", s.headerAuthorize)
-	}
-
-	var details *authentication.UserDetails
-
-	if details, err = ctx.Providers.UserProvider.GetDetails(username); err != nil {
-		if errors.Is(err, authentication.ErrUserNotFound) {
-			ctx.Logger.WithField("username", username).Error("Error occurred while attempting to get user details for user: the user was not found indicating they were deleted, disabled, or otherwise no longer authorized to login")
-
-			return authn, err
+	switch {
+	case ccs:
+		if len(clientID) == 0 {
+			return authn, fmt.Errorf("failed to determine client id from the %s header", s.headerAuthorize)
 		}
 
-		return authn, fmt.Errorf("unable to retrieve details for user '%s': %w", username, err)
+		authn.ClientID = clientID
+	case len(username) == 0:
+		return authn, fmt.Errorf("failed to determine username from the %s header", s.headerAuthorize)
+	default:
+		var details *authentication.UserDetails
+
+		if details, err = ctx.Providers.UserProvider.GetDetails(username); err != nil {
+			if errors.Is(err, authentication.ErrUserNotFound) {
+				ctx.Logger.WithField("username", username).Error("Error occurred while attempting to get user details for user: the user was not found indicating they were deleted, disabled, or otherwise no longer authorized to login")
+
+				return authn, err
+			}
+
+			return authn, fmt.Errorf("unable to retrieve details for user '%s': %w", username, err)
+		}
+
+		authn.Username = friendlyUsername(details.Username)
+		authn.Details = *details
 	}
 
-	authn.Username = friendlyUsername(details.Username)
-	authn.Details = *details
 	authn.Level = level
 
 	return authn, nil
@@ -242,28 +252,28 @@ func (s *HeaderAuthnStrategy) handleGetBasic(ctx *middlewares.AutheliaCtx, authz
 	return authz.BasicUsername(), authentication.OneFactor, nil
 }
 
-func (s *HeaderAuthnStrategy) handleGetBearer(ctx *middlewares.AutheliaCtx, authz *model.Authorization, object *authorization.Object) (username string, level authentication.Level, err error) {
+func (s *HeaderAuthnStrategy) handleGetBearer(ctx *middlewares.AutheliaCtx, authz *model.Authorization, object *authorization.Object) (username, clientID string, ccs bool, level authentication.Level, err error) {
 	if ctx.Providers.OpenIDConnect == nil || ctx.Configuration.IdentityProviders.OIDC == nil || !ctx.Configuration.IdentityProviders.OIDC.Discovery.BearerAuthorization {
-		return "", authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the bearer scheme requires an OpenID Connect 1.0 configuration but it's absent", s.headerAuthorize)
+		return "", "", false, authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the bearer scheme requires an OpenID Connect 1.0 configuration but it's absent", s.headerAuthorize)
 	}
 
 	if !ctx.Configuration.IdentityProviders.OIDC.Discovery.BearerAuthorization {
-		return "", authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the bearer bearer scheme requires an OpenID Connect 1.0 client configured with the '%s' scope but there are none", s.headerAuthorize, oidc.ScopeAutheliaBearerAuthz)
+		return "", "", false, authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the bearer bearer scheme requires an OpenID Connect 1.0 client configured with the '%s' scope but there are none", s.headerAuthorize, oidc.ScopeAutheliaBearerAuthz)
 	}
 
 	use, ar, err := ctx.Providers.OpenIDConnect.IntrospectToken(ctx, authz.Value(), fosite.AccessToken, oidc.NewSession(), oidc.ScopeAutheliaBearerAuthz)
 	if err != nil {
 		ctx.Logger.WithError(oidc.ErrorToDebugRFC6749Error(err)).Error("Error occurred while introspecting the bearer token for authorization")
 
-		return "", authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: token introspection failed", s.headerAuthorize)
+		return "", "", false, authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: token introspection failed", s.headerAuthorize)
 	}
 
 	if use != fosite.AccessToken {
-		return "", authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the token is not an access token", s.headerAuthorize)
+		return "", "", false, authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the token is not an access token", s.headerAuthorize)
 	}
 
 	if err = ctx.Providers.OpenIDConnect.GetAudienceStrategy(ctx)(ar.GetGrantedAudience(), []string{object.URL.String()}); err != nil {
-		return "", authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the token does not contain a valid audience for the url '%s' with the error: %w", s.headerAuthorize, object.URL, err)
+		return "", "", false, authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the token does not contain a valid audience for the url '%s' with the error: %w", s.headerAuthorize, object.URL, err)
 	}
 
 	fsession := ar.GetSession()
@@ -274,11 +284,15 @@ func (s *HeaderAuthnStrategy) handleGetBearer(ctx *middlewares.AutheliaCtx, auth
 	)
 
 	if session, ok = fsession.(*oidc.Session); !ok {
-		return "", authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the introspection returned an invalid session type", s.headerAuthorize)
+		return "", "", false, authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the introspection returned an invalid session type", s.headerAuthorize)
+	}
+
+	if session.ClientCredentials {
+		return "", session.ClientID, true, authentication.OneFactor, nil
 	}
 
 	if session.DefaultSession == nil || session.DefaultSession.Claims == nil {
-		return "", authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the introspection returned a session missing required values", s.headerAuthorize)
+		return "", "", false, authentication.NotAuthenticated, fmt.Errorf("failed to validate %s header with bearer scheme: the introspection returned a session missing required values", s.headerAuthorize)
 	}
 
 	if oidc.NewAuthenticationMethodsReferencesFromClaim(session.DefaultSession.Claims.AuthenticationMethodsReferences).MultiFactorAuthentication() {
@@ -287,7 +301,7 @@ func (s *HeaderAuthnStrategy) handleGetBearer(ctx *middlewares.AutheliaCtx, auth
 		level = authentication.OneFactor
 	}
 
-	return session.Username, level, nil
+	return session.Username, "", false, level, nil
 }
 
 // CanHandleUnauthorized returns true if this AuthnStrategy should handle Unauthorized requests.
