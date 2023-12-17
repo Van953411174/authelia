@@ -65,7 +65,7 @@ server:
       forward-auth:
         implementation: 'ForwardAuth'
         authn_strategies:
-          - name: 'HeaderProxyAuthorization'
+          - name: 'HeaderAuthorization'
             schemes:
               - 'Basic'
               - 'Bearer'
@@ -73,7 +73,7 @@ server:
       ext-authz:
         implementation: 'ExtAuthz'
         authn_strategies:
-          - name: 'HeaderProxyAuthorization'
+          - name: 'HeaderAuthorization'
             schemes:
               - 'Basic'
               - 'Bearer'
@@ -93,6 +93,28 @@ server:
           - name: 'CookieSession'
 ```
 
+### Access Control Configuration
+
+In addition to the restriction of the token audience having to match the target location you must also grant access
+in the Access Control section of of the configuration either to the user or in the instance of the 'client_credentials'
+grant the client itself.
+
+It is important to note that the `client_credentials` grant is **always** treated as 1FA thus only the `one_factor`
+policy is useful for this grant type.
+
+```yaml
+access_control:
+  rules:
+    ## The 'app1.example.com' domain for the user 'john' regardless if they're using OAuth 2.0 or session based flows.
+    - domain: app1.example.com
+      policy: one_factor
+      subject: 'user:john'
+
+    ## The 'app2.example.com' domain for the 'example-three' client when using the 'client_credentials' grant.
+    - domain: app2.example.com
+      policy: one_factor
+      subject: 'oauth2:client:example-three'
+```
 ### Client Restrictions
 
 In addition to the above protections, this scope **_MUST_** only be configured on clients with strict security rules
@@ -127,7 +149,7 @@ identity_providers:
       - id: 'example-one'
         public: true
         redirect_uris:
-          - 'http://localhost:2121'
+          - 'http://localhost/callback'
         scopes:
           - 'offline_access'
           - 'authelia.bearer.authz'
@@ -150,6 +172,8 @@ identity_providers:
 
 ##### Confidential Client Example: Authorization Code Flow
 
+This is likely the most common configuration for most users.
+
 ```yaml
 identity_providers:
   oidc:
@@ -158,7 +182,7 @@ identity_providers:
         secret: '$pbkdf2-sha512$310000$c8p78n7pUMln0jzvd4aK4Q$JNRBzwAo0ek5qKn50cFzzvE9RXV88h1wJn5KGiHrD0YKtZaR/nCb2CJPOsKaPK0hjf.9yHxzQGZziziccp6Yng'  # The digest of 'insecure_secret'.
         public: false
         redirect_uris:
-          - 'https://id.example.com'
+          - 'http://localhost/callback'
         scopes:
           - 'offline_access'
           - 'authelia.bearer.authz'
@@ -181,15 +205,17 @@ identity_providers:
 
 ##### Confidential Client Example: Client Credentials Flow
 
+This example illustrates a method to configure a Client Credential flow for this purpose. This flow is useful for
+automations. It's important to note that for access control evaluation purposes this token will match a subject of
+`oauth2:client:example-two` i.e. the `oauth2:client:` prefix followed by the client id.
+
 ```yaml
 identity_providers:
   oidc:
     clients:
-      - id: 'example-two'
+      - id: 'example-three'
         secret: '$pbkdf2-sha512$310000$c8p78n7pUMln0jzvd4aK4Q$JNRBzwAo0ek5qKn50cFzzvE9RXV88h1wJn5KGiHrD0YKtZaR/nCb2CJPOsKaPK0hjf.9yHxzQGZziziccp6Yng'  # The digest of 'insecure_secret'.
         public: false
-        redirect_uris:
-          - 'https://id.example.com'
         scopes:
           - 'authelia.bearer.authz'
         audience:
@@ -197,8 +223,5 @@ identity_providers:
           - 'https://app2.example.com'
         grant_types:
           - 'client_credentials'
-        enforce_par: true
-        enforce_pkce: true
-        pkce_challenge_method: 'S256'
         token_endpoint_auth_method: 'client_secret_post'
 ```

@@ -79,6 +79,7 @@ func (authz *Authz) Handler(ctx *middlewares.AutheliaCtx) {
 		authorization.Subject{
 			Username: authn.Details.Username,
 			Groups:   authn.Details.Groups,
+			ClientID: authn.ClientID,
 			IP:       ctx.RemoteIP(),
 		},
 		object,
