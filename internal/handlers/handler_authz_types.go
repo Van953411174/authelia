@@ -66,6 +66,7 @@ const (
 type Authn struct {
 	Username string
 	Method   string
+	ClientID string
 
 	Details authentication.UserDetails
 	Level   authentication.Level
@@ -80,6 +81,9 @@ type AuthzConfig struct {
 	// StatusCodeBadRequest is sent for configuration issues prior to performing authorization checks. It's set by the
 	// builder.
 	StatusCodeBadRequest int
+
+	// EnableBearerScheme indicates if the bearer authorization scheme is available via OpenID Connect 1.0.
+	EnableBearerScheme bool
 }
 
 // AuthzBuilder is a builder pattern for the Authz type.
@@ -91,7 +95,7 @@ type AuthzBuilder struct {
 
 // AuthnStrategy is a strategy used for Authz authentication.
 type AuthnStrategy interface {
-	Get(ctx *middlewares.AutheliaCtx, provider *session.Session) (authn Authn, err error)
+	Get(ctx *middlewares.AutheliaCtx, provider *session.Session, object *authorization.Object) (authn Authn, err error)
 	CanHandleUnauthorized() (handle bool)
 	HandleUnauthorized(ctx *middlewares.AutheliaCtx, authn *Authn, redirectionURL *url.URL)
 }
